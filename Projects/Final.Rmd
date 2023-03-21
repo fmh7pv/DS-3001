@@ -1,0 +1,412 @@
+---
+title: "DS 3001 Final Project"
+author: "Param Damle, Matthew Condecido, Fadumo Hussein, Beza Gashe"
+date: "2022-12-10"
+format: 
+  html:
+    fig-width: 8
+    fig-height: 4
+    code-fold: true
+    toc: true
+    toc-title: Table of Contents
+    toc-float: true
+    toc-location: left
+    theme: quartz
+---
+
+# Introduction
+
+For our final project, we sought to ask, "**How well can we predict song recommendations based on user data from Spotify?**"
+
+## Motivation
+
+We already know that Spotify themselves use listening behavior to constantly tune their recommendation algorithms \[1\]. Their approach is more complicated, focusing on collaborative filtering of exploration (new songs and artists you might enjoy) and exploitation (more work similar to what you already have on repeat). Further, they are able to access a more complicated dataset, consisting of hundreds of millions of users performing a decade of interactions including likes, shares, and skips.
+
+With our approach, we simplify this to we transcend genre; we only use the inherent qualities of the song as measured by Spotify (such as tempo, instrumentalness, acousticness, etc) and the network of users and their song playing habits to build our recommendation engine.
+
+## Methodology
+
+Our data consists of a pool of Spotify user data anonymised and used for visualization in SARC 5400 (Data Visualization) Spring 2022. There's a pool of 23 different students who shared data, which constitute in total 421,313 rows, each one corresponding to one listen. Each track contains features about valence, danceability, instrumentalness, acousticness, and loudness \[2\].
+
+We propose using K-Means clustering to find songs that are similar to others in auditory characteristics by neighboring proximity. However, our approach is novel because in addition to the inherent qualities of the songs, we will add features for the listening habits of our 23-student pool, attempting to simulate (on a smaller scale) the peer-to-peer recommendation system that makes Spotify millions of dollars.
+
+# Data Preparataion
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(psych)
+library(mltools)
+library(data.table)
+library(caret)
+library(mice)
+#install.packages('dbscan')
+library(dbscan)
+#install.packages("factoextra")
+library(factoextra)
+```
+
+We import the dataset below, and examine its contents. Next, we cleaned the data by checking for missing values. We also dropped columns such as milliseconds played and play end time as we found that these fields to be not that important towards predicting song recommendations for users. We also dropped columns key and time signature from our dataset as we found these musical characteristics to be minimal towards swaying one's opinion towards liking or disliking a certain song compared to the remaining attributes of the track.
+
+```{r load data}
+Spotify <-read.csv("spotify_merged.csv")
+# view(Spotify)
+#str(Spotify)
+
+#Drop some columns 
+Spotify <- Spotify[, -c(1, 3, 6, 8, 11, 21)]  # row num, play end time, ms played, time of day, key, time signature
+#str(Spotify)
+
+#Checking for missing values 
+colSums(is.na(Spotify))
+md.pattern(Spotify, rotate.names = TRUE)
+#str(Spotify)
+
+#Change columns 
+Spotify[,"personID"] <- as.factor(Spotify[,"personID"])
+str(Spotify)
+```
+
+We used standard scaling to resize the distribution of values falling under the numeric fields in our dataset. This, as opposed to min-max scaling, allows our distributions to look more centered around the mean. The histograms are provided below:
+
+```{r standard scaling}
+Spotify_scaled <- Spotify
+
+for (c in colnames(Spotify %>% select(where(is.numeric)))){
+  if (c != 'mode'){
+    Spotify_scaled[,c] <- scale(Spotify[,c])  # standard scaling
+  }
+}
+
+Spotify_scaled_num = Spotify_scaled %>% 
+  select(where(is.numeric))
+
+str(Spotify_scaled_num)
+ggplot(gather(Spotify_scaled_num), aes(value)) + 
+    geom_histogram(bins = 10) + 
+    facet_wrap(~key, scales = 'free_x')
+
+```
+
+We then performed one-hot encoding on the people whose data comprises the dataset, so that each person has his/her own column and a 0 or 1 indicates if this person was responsible for this listen. Here is an example of processing that wouldn't be possible at scale, such as in Spotify data farms. Thus, they must have a more complicated data structure, but this will suffice for our methods.
+
+```{r one-hot encoding}
+Spotify_scaled <- one_hot(as.data.table(Spotify_scaled))
+# Spotify_Removed_Duplicates <- Spotify_scaled[!duplicated(Spotify_scaled), ] # if we're only counting whether someone listened or not
+str(Spotify_scaled)
+```
+
+Our last step of data cleaning is the collapsing of the person id and track id columns. We have made changes to the person id columns so that a value of 1 is represented if a particular Spotify user has ever listened to a song and a value of 0 is represented if that same user has never listened to that same song. These columns have been merged back into the Spotify dataset to feed into our "0-1" method.
+
+```{r collapsing data 0-1}
+just_user_IDs = Spotify_scaled[, c(1:23, 26)] # all the people + track ID
+collapsed_user_IDs <- just_user_IDs %>% group_by(Track.Id) %>% summarise_all(funs(sum))
+
+# because we only want to see if a user listened to a song or not, instead of the number of plays
+collapsed_user_IDs[, c(2:24)] <- (collapsed_user_IDs[, c(2:24)] > 0)
+collapsed_user_IDs <- collapsed_user_IDs %>% mutate_at(c(2:24), as.numeric)
+
+song_features = Spotify_scaled[, -c(1:23)]  # only track attributes, no people data
+collapsed_song_features = song_features[!duplicated(song_features$Track.Id), ]
+
+Spotify_DF = merge(x = collapsed_song_features, y = collapsed_user_IDs, by = "Track.Id")
+```
+
+## Data Discovery with DBSCAN
+
+We attempted to use DBSCAN for our clustering algorithm. DBSCAN is characterized by its density-based spatial clustering, which means that we do not have to provide a specific number of clusters for DBSCAN to create - this clustering method simply partitions the data points that are in high proximity with each other automatically. DBSCAN also detects outliers when run, characterizing these data points as noise points.
+
+```{r dbscan}
+# DBSCAN stands for density-based spatial clustering of applications with noise. It is able to find arbitrary shaped clusters and clusters with noise (i.e. outliers).
+
+# There are two key parameters of DBSCAN:
+# eps: The distance that specifies the neighborhoods. Two points are considered to be neighbors if the distance between them are less than or equal to eps.
+# minPts: Minimum number of data points to define a cluster.
+# https://towardsdatascience.com/dbscan-clustering-explained-97556a2ad556 
+
+
+track_features <- Spotify_DF[, -c(1:3, 15:37)] # Remove non-numeric columns and those with user ID information
+
+
+# https://en.wikipedia.org/wiki/DBSCAN#Parameter_estimation
+# As a general rule, a minimum minPoints can be derived from a number of dimensions (D) in the data set, as minPoints ≥ D + 1.
+dim(track_features) # dimensions = 11
+# minPoints = dimensions + 1 -> minPoints = 12
+
+
+## Produce a k-NN distance plot to determine a suitable eps for
+## DBSCAN with MinPts = 12. Use k = 11 (= MinPts -1).
+## https://cran.r-project.org/web/packages/ClusterR/vignettes/the_clusterR_package.html  
+
+## Computing the k-nearest neighbors (k-NN) for each data point helps to understand what is the density distribution of your data, for different k.
+## https://stackoverflow.com/questions/12893492/choosing-eps-and-minpts-for-dbscan-r
+dbscan::kNNdistplot(track_features, 11)
+abline(h=2.5, col="blue")
+
+db <- dbscan::dbscan(track_features, minPts = 12, eps=2.5)
+acousticness_and_speechiness <- track_features[, 5:6]
+db
+db_plot <- plot(acousticness_and_speechiness, col=db$cluster+1, main="Acousticness vs. Speechiness")
+
+
+## Due to the skewness of the data and the inclusion of noise points when dividing data points into clusters, we have decided that KMeans is best to perform clustering regarding the ML question that we are trying to answer.
+
+```
+
+We ultimately decided to not use DBSCAN due to the inclusion of podcasts in our database. From the graph above, it appears that songs and podcasts are seemingly the most clear separation between the listening behavior due to the high density patterns with which these media types seem to differ auditorily. We pivoted towards using K-Means clustering instead.
+
+# Experimentation
+
+## K-Means Clustering
+
+We used the explained variance function from Week 11's in-class R file to find the ratio of all possible variance for the values in our dataset - the ratio being inner-cluster variance (between sum of squares) divided by total variance (total of sum of squares). Running this function helps us determine how much variance is explained by the clusters made by running K-Means on our Spotify dataset.
+
+```{r explained variance}
+explained_variance = function(data_in, k){
+
+  # Running the kmeans algorithm.
+  set.seed(1)
+  kmeans_obj = kmeans(data_in, centers = k, algorithm = "Lloyd", iter.max = 200)
+
+  # Variance accounted for by clusters:
+  # var_exp = intercluster variance / total variance
+  var_exp = kmeans_obj$betweenss / kmeans_obj$totss
+  var_exp
+}
+```
+
+Here, we used the elbow method to find the optimal k-value to run k-means clustering for the points in our dataset that keeps the number of clusters low while still explaining a lot of the variance. We have determined that the elbow in our graph lies in the value of k = 10.
+
+```{r 0-1 elbow}
+Spotify_DF_num <-Spotify_DF[, c(4:37)]
+#str(Spotify2)
+
+#Elbow method 
+k_range = seq(2,20)
+set.seed(1)
+explained_var_Spotify = sapply(k_range, explained_variance, data_in = Spotify_DF_num)
+# View(explained_var_Spotify)
+
+# Data for ggplot2.
+elbow_data_Spotify = data.frame(k = k_range, explained_var_Spotify)
+#View(elbow_data_Spotify)
+
+# Plotting data.
+plot <-ggplot(elbow_data_Spotify, 
+       aes(x = k,  
+           y = explained_var_Spotify)) + 
+  geom_point(size = 4) +           #<- sets the size of the data points
+  geom_line(linewidth = 1) +            #<- sets the thickness of the line
+  xlab('k') + 
+  ylab('Inter-cluster Variance / Total Variance') + 
+  theme_light()
+print(plot)
+```
+
+Next, we appended the clusters created from K-Means to our Spotify dataset to assign each song to a cluster to better compile song recommendations for users based on song input.
+
+```{r appending clusters}
+set.seed(1)
+optimal_k = 10
+kmeans_obj_Spotify = kmeans(Spotify_DF_num, centers = optimal_k, algorithm = "Lloyd", iter.max = 200)
+
+# this is the output of the model. 
+# kmeans_obj_Spotify$cluster
+
+Spotify2 <- Spotify_DF[, c(4:14)]
+Spotify2$cluster <- kmeans_obj_Spotify$cluster
+str(Spotify2)
+```
+
+### Visualizing the data
+
+When visualizing our data, we wanted to use all numeric data in our dataset. We found a package called factoextra to allow us to extract and analyze multivariate data. The function we used relies on PCA, or principal component analysis. This plotted our data based on the first two principal components. The Dims axes describe each principal component and its account of the variation, so Dim1 accounts for 10.1% of the variation and Dim2 accounts for 6% of the variation. Overall, they account for 16.1% of the variation.
+
+```{r 0-1 visualization}
+fviz_cluster(kmeans_obj_Spotify, data = Spotify_DF_num)
+```
+
+### Application
+
+Here we take the sonic attributes of tracks inputted by users (like our test subjects during experimentation) and scale them the same way we scaled our training data. These attributes will be used in proximity to our cluster centers to identify cluster membership.
+
+```{r features for song at hand}
+track_features <- c(0.558,0.535,-10.37,1,0.163,0.643,0,0.101,0.464,169.859,178903)
+
+# Heated by Beyonce
+# c(0.785,0.732,-5.724,1,0.164,0.0636,0.000807,0.265,0.496,110.952,260771)
+# Avalanche by Christian French
+# c(0.636,0.864,-3.919,1,0.0491,0.0314,0,0.102,0.892,160.009,199512)
+# Missed Calls by Mac Miller
+# c(0.558,0.535,-10.37,1,0.163,0.643,0,0.101,0.464,169.859,178903)
+
+for (c in seq(1,length(Spotify_scaled_num))){
+  if(colnames(Spotify_scaled_num)[c] != 'mode'){
+    track_features[c] <- scale(track_features[c], center=attr(Spotify_scaled_num[, c], "scaled:center"), scale=attr(Spotify_scaled_num[, c], "scaled:scale"))
+  }
+}
+
+track_features
+```
+
+Here we define the formula for calculating Euclidean distance between points in the Spotify dataset.
+
+```{r Euclidean}
+# Euclidean distance function
+euc <- function(v1, v2){
+  dist(rbind(v1, v2))
+}
+```
+
+We collect the centroids of our clusters. A centroid is the average distance from all the points to the center - the middle of all the points that have been assigned to that cluster - using Euclidean distance. Future work could expand this to include other norms than Euclidean.
+
+```{r examining centers}
+centers <- Spotify2 %>% group_by(cluster) %>% summarise_all(funs(mean))
+view(centers)
+```
+
+To find a full sorted list of recommendations, we first found which cluster center the inputted track was closest to (to determine which cluster this track would fall in, ignoring listening behavior and looking only at track features). Now, within this cluster, we sort the points based on how close their attributes are to the inputted song.
+
+```{r recommendation sorting}
+min_dist = Inf
+min_clust = -1
+for (i in seq(1,dim(centers)[1])){
+  center = as.numeric(centers[i,2:12])
+  distance_to_center = euc(center, track_features)
+  if(distance_to_center < min_dist){
+    min_dist = distance_to_center
+    min_clust = as.numeric(centers[i,1])
+  }
+}
+#min_clust
+
+Spotify3 <- Spotify_DF[Spotify2$cluster == min_clust, -c(15:37)]
+distances <- list()
+for (i in seq(1,dim(Spotify3)[1])){
+  vec = as.numeric(Spotify3[i,4:14])
+  distances <- append(distances, euc(vec, track_features))
+}
+Spotify3$dist <- as.numeric(distances)
+```
+
+Still, we don't want to look at the full cluster sorted. The following table represents the 5 songs in the Spotify dataset most similar to the song a user has inputted based on the similarities between the auditory features of the track.
+
+```{r zero one results}
+number_of_recs = 5
+Spotify4 <- Spotify3[order(dist),]
+Spotify4[1:number_of_recs, c(1:3)]
+```
+
+## Improvements
+
+We can do better than these recommendations by capturing more data in our user behavior columns, Instead of the 0-1 method of determining if a user listened to a given song, we collapsed the person and track id columns of the original Spotify dataset to now have the person id columns represent the frequency to which a user listened to a particular track compared to others in the dataset.
+
+```{r collapsing data frequencies}
+just_user_IDs_f = Spotify_scaled[, c(1:23, 26)] # all the people + track ID
+collapsed_user_IDs_f <- just_user_IDs_f %>% group_by(Track.Id) %>% summarise_all(funs(sum))
+
+# because we now want to look at the relative number of plays this user gave this song
+collapsed_user_IDs_f[, c(2:24)] <- predict(preProcess(as.data.frame(collapsed_user_IDs_f[, c(2:24)]), method=c("range")), as.data.frame(collapsed_user_IDs_f[, c(2:24)])) * 5 # this is a proportional parameter; how influential is this frequency in regards to the other fields?
+
+song_features_f = Spotify_scaled[, -c(1:23)]  # only track attributes, no people data
+collapsed_song_features_f = song_features_f[!duplicated(song_features_f$Track.Id), ]
+
+Spotify_DF_f = merge(x = collapsed_song_features_f, y = collapsed_user_IDs_f, by = "Track.Id")
+```
+
+We perform the same elbow method as before to determine the optimal k-value to run K-Means for our data frequency dataset. We have determined that the elbow in our graph lies in the value k = 12.
+
+```{r frequency elbow}
+Spotify_DF_num_f <-Spotify_DF_f[, c(4:37)]
+#str(Spotify2)
+
+#Elbow method 
+k_range = seq(2,20)
+set.seed(1)
+explained_var_Spotify_f = sapply(k_range, explained_variance, data_in = Spotify_DF_num_f)
+# View(explained_var_Spotify)
+
+# Data for ggplot2.
+elbow_data_Spotify_f = data.frame(k = k_range, explained_var_Spotify_f)
+#View(elbow_data_Spotify)
+
+# Plotting data.
+plot <-ggplot(elbow_data_Spotify_f, 
+       aes(x = k,  
+           y = explained_var_Spotify_f)) + 
+  geom_point(size = 4) +           #<- sets the size of the data points
+  geom_line(linewidth = 1) +            #<- sets the thickness of the line
+  xlab('k') + 
+  ylab('Inter-cluster Variance / Total Variance') + 
+  theme_light()
+print(plot)
+```
+
+We utilize the same package "factoextra" to plot the data points and their affiliated clusters within our modified Spotify dataset. Here we see that less of the variance is explained in the first two components than before. This is likely due to more variance being captured in the sparse dimensions of user behavior.
+
+```{r frequency visualization}
+set.seed(1)
+optimal_k_f = 12
+kmeans_obj_Spotify_f = kmeans(Spotify_DF_num_f, centers = optimal_k_f, algorithm = "Lloyd", iter.max = 200)
+
+# this is the output of the model. 
+# kmeans_obj_Spotify$cluster
+
+Spotify2_f <- Spotify_DF_f[, c(4:14)]
+Spotify2_f$cluster <- kmeans_obj_Spotify_f$cluster
+
+fviz_cluster(kmeans_obj_Spotify_f, data = Spotify_DF_num_f)
+```
+
+### Application
+
+We perform the same processes utilized in our recommendation sorting towards the previous iteration of our dataset to determine the neighbors of the song inputted by the user. We run this proximity analysis using the same track inputted before to eliminate confounding variables.
+
+```{r prediction frequencies}
+centers_f <- Spotify2_f %>% group_by(cluster) %>% summarise_all(funs(mean))
+
+min_dist_f = Inf
+min_clust_f = -1
+for (i in seq(1,dim(centers_f)[1])){
+  center = as.numeric(centers_f[i,2:12])
+  distance_to_center = euc(center, track_features)
+  if(distance_to_center < min_dist_f){
+    min_dist_f = distance_to_center
+    min_clust_f = as.numeric(centers_f[i,1])
+  }
+}
+# print(min_clust_f)
+
+Spotify3_f <- Spotify_DF_f[Spotify2_f$cluster == min_clust, -c(15:37)]
+distances_f <- list()
+for (i in seq(1,dim(Spotify3_f)[1])){
+  vec = as.numeric(Spotify3_f[i,4:14])
+  distances_f <- append(distances_f, euc(vec, track_features))
+}
+Spotify3_f$dist <- as.numeric(distances_f)
+```
+
+The following table represents the 5 songs in the Spotify dataset most similar to the song a user has inputted based on the similarities between the auditory features of the track, now accounting for listening frequency by users.
+
+```{r frequency results}
+Spotify4_f <- Spotify3_f[order(dist),]
+Spotify4_f[1:number_of_recs, c(1:3)]
+```
+
+# Results
+
+We evaluated our model by reaching out to test subjects who proposed a song they considered to be a 10. Using the Spotify API and a Google Colab notebook, we retrieved the Spotify features of each of these suggestions, and ran them through our recommendation algorithm. The top 3 recommendations were passed on to the original test subject, who rated them out of 10. Out of 3 test subjects, 2 were given the same Top 3 songs from both K-Means models. The third that wasn't received a song that he rated 5/10 from the 0-1 algorithm and a 7/10 from the frequency algorithm. Aggregating all our ratings together, our 0-1 model produced average recommendation scores of 5.86 compared to the frequency-based rating of 6.19.
+
+Often, if a provided song was popular enough to have existed in the training dataset, that song and its own cluster would be returned, as a testament to the proximity matching feature of our clustering pipeline.
+
+# Conclusion
+
+Overall, we discovered that the listening habits of users can provide useful information in determining song similarity and recommendation in addition to the inherent qualities of the songs themeselves as measured by the platforms they're on. As the recommendations provided are above 5/10, we know that in general the songs provided have some merit in relation to the song inputted by our test subjects. However, since the highest average score any of our models got was 6.19, there's still a long way to go. This represents the inherent limitations in the model: only 23 data sources, a listening history of 1 year, basic k-means clustering, UVA students making a DS-3001 project in R studio. However, this project serves as an important statement that the fundamentals of complex billion-dollar algorithms can be emulated using fundamental machine learning knowledge.
+
+If we had more time to improve our Spotify song recommendation model, we would have all users who recommended songs for us in our data-collection processes and their feedback built into the Spotify dataset. We would build upon the limited number of users this dataset contains to hopefully give better recommendations for users if their musical preferences align with our subjects' tastes. We would have also liked to add columns to the existing Spotify dataset such as if a person added a particular song to his or her playlist, if this same person liked or disliked a particular song, etc. to better capture the neighbors of songs in the clusters that users would really enjoy if recommended to them. Iteratively expanding our dataset in this manner would be analogous to what Spotify likely did in its infancy: providing recommendations based on data, and then capturing interactions from users based on these recommendations as data for the next iteration.
+
+# References
+
+\[1\] Hucker Marius. "*Uncovering How the Spotify Algorithm Works*". https://towardsdatascience.com/uncovering-how-the-spotify-algorithm-works-4d3c021ebc0
+
+\[2\] Dmitry Pastukhov. "*How Spotify's Algorithm Works*". https://www.music-tomorrow.com/blog/how-spotify-recommendation-system-works-a-complete-guide-2022

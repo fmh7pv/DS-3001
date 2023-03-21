@@ -1,0 +1,98 @@
+---
+title: "Competition"
+author: "Param Damle, Fadumo Hussein, Beza Gashe, Matthew Condecido"
+date: "2022-11-3"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+
+library(caret)
+library(tidyverse)
+library(class)
+library(plotly)
+library(mice)
+library(MLmetrics)
+library(mltools)
+library(data.table)
+library(rio)
+library(plyr)
+library(tidyverse)
+library(rpart)
+library(psych)
+library(pROC)
+library(caret)
+library(C50) #Need this to pass into caret 
+library(mlbench)
+```
+
+```{r }
+
+#Upload 
+education <- read.csv("states_all_2_training.csv")
+education <- select(education, -c(1,2,3,14,15,17,18,20)) 
+#Clean it up!
+md.pattern(education, rotate.names = TRUE)
+str(education)
+df <- education[complete.cases(education), ]
+md.pattern(df, rotate.names = TRUE)
+df[,c(1:17)] <- lapply(df[,c(1:17)], as.numeric)
+str(df)
+df_1h <- df
+```
+
+df$STATE <- fct_collapse(df$STATE,
+                             Northeast=c("CONNECTICUT", "DELAWARE", "DISTRICT_OF_COLUMBIA","MAINE","MARYLAND","MASSACHUSETTS","NEW_HAMPSHIRE", "NEW_JERSEY","NEW_YORK","PENNSYLVANIA","RHODE_ISLAND","VERMONT"),
+                             South=c("ALABAMA", "ARKANSAS", "FLORIDA", "GEORGIA", "KANSAS","KENTUCKY","LOUISIANA","MISSISSIPPI","MISSOURI","NORTH_CAROLINA","OKLAHOMA","SOUTH_CAROLINA","TENNESSEE","TEXAS","VIRGINIA"),
+                            Midwest=c("ILLINOIS","INDIANA","IOWA","MICHIGAN","MINNESOTA","NEBRASKA","NORTH_DAKOTA","OHIO","SOUTH_DAKOTA","WEST_VIRGINIA","WISCONSIN"),
+                           West=c("ARIZONA","CALIFORNIA","COLORADO","IDAHO","MONTANA","NEVADA","NEW_MEXICO","OREGON","UTAH","WASHINGTON","WYOMING"),
+                           Noncontiguous=c("ALASKA","HAWAII"))
+df['STATE'] <- lapply(df['STATE'], as.factor)  # configure character fields as factors
+
+df_1h <- one_hot(as.data.table(df),cols = "STATE", sparsifyNAs = TRUE, naCols = FALSE, dropCols = TRUE, dropUnusedLevels = TRUE)#one_hot function requires a data.table class so we coerce the format.
+str(df_1h)#what looks different?
+
+```{r}
+str = ""
+for (i in colnames(df_1h)){
+  if(i != "AVG_READING_4_SCORE"){
+  str = paste(str, i, sep=" + ")}
+}
+print(str)
+```
+
+
+```{r}
+model <- lm(AVG_READING_4_SCORE ~ ENROLL + TOTAL_REVENUE + FEDERAL_REVENUE + STATE_REVENUE + LOCAL_REVENUE + TOTAL_EXPENDITURE + INSTRUCTION_EXPENDITURE + SUPPORT_SERVICES_EXPENDITURE + OTHER_EXPENDITURE + CAPITAL_OUTLAY_EXPENDITURE + GRADES_4_G + GRADES_1_8_G + GRADES_ALL_G + AVG_MATH_4_SCORE + AVG_MATH_8_SCORE + AVG_READING_8_SCORE, data = df_1h)
+summary(model)
+```
+
+The above linear regression model has a pretty good correlation coefficient of almost 90%, and we can see that the most influential variables here were the intercept (to get the ratings in the 200s) and the average scores of students on math and reading across other grades. This makes sense, as students that perform well in other subjects and throughout time would be more likely to perform well at reading in 4th grade.
+
+I also tried fitting with polynomial factors for each variable, up to 5 degrees per predictor variable. This caused a drastic overfit in my data and the resultant scores on Kaggle were very poor. Industry insiders often say that a majority of the work they do is simply linear models, and I am beginning to believe that fact. The simplicity of the final model is one of its strongest merits.
+
+
+```{r}
+edutest <- read.csv("test_set_public.csv")
+edutest <- select(edutest, -c(1,2,3,14,15,17,18,20)) 
+edutest[,c(1:16)] <- lapply(edutest[,c(1:16)], as.numeric)
+str(edutest)
+```
+
+
+```{r}
+final <- read.csv("test_set_public.csv")
+final <- select(final, -c(2:24)) 
+colnames(final)[1] ="ID"
+final$PREDICTED = predict(model, edutest)
+write.csv(final,"predictions.csv", row.names = FALSE)
+```
+
+This process was challenging because a data science notebook isn't a very intuitively collaborative platform. Only one person should be editing or running code at a time, and often times with how easy to type languages like R are, any verbal recommendations other teammates could give will be inherently slower than just typing it out yourself. Thus, we decided to take an approach where each teammate tries a different form of model (decision tree regressor, lienar regression, etc) and whoever outputted the best work would take the final submission. This divide-and-conquer methodology is similar to the ticket-based agile methodology employed by software companies.
+
+For me personally, when building the linear regressor, I had to worry about which variables to include, as my model was performing worse when I was including information on enrollment sizes of other grades and states/regions, which I cut out to get the better performance I have now.
+
