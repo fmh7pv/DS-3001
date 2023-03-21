@@ -1,0 +1,257 @@
+---
+title: "Assignment 4 Data Prep for ML, Hussein"
+author: "Fadumo Hussein"
+date: "2022-10-17"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(psych)
+library(mltools)
+library(data.table)
+library(caret)
+library(gradDescent)
+library(mice)
+```
+
+
+
+### Scale/Center/Normalizing/Variable Classes
+
+```{r}
+college <-read.csv("https://query.data.world/s/tfw5vwrkkbj63jdbwvz6vaakirqfi6", header=TRUE, stringsAsFactors=FALSE);
+                    
+str(college)
+column_index <- tibble(colnames(college))
+
+print(column_index, n=62)
+
+#Missing values
+
+md.pattern(college, rotate.names = TRUE)
+
+
+college[college=="NULL"] <- NA
+
+md.pattern(college, rotate.names = TRUE)
+
+colSums(is.na(college))#?colSums
+print(column_index, n=62)
+
+x <- 40:56
+
+#Most of these columns have a good number of missing values or are not useful.  
+college_1 <- college[ ,c(-10,-11,-12,-x,-28,-29,-37,-57, -61)]
+
+#Make a new index
+column_index_1 <- tibble(colnames(college_1))
+colSums(is.na(college_1))
+print(column_index_1, n=37)
+
+#Dropped a bunch more that appeared to be repeats or not predictive 
+college_2 <- subset(college_1, select = -c(unitid,city,state,basic,med_sat_value,med_sat_percentile,counted_pct))
+
+summary(college_2)
+colSums(is.na(college_2))
+
+
+college_2$hbcu <- as.factor(ifelse(is.na(college_2$hbcu),0,1))
+#same for flagship
+college_2$flagship <- as.factor(ifelse(is.na(college_2$flagship),0,1))
+
+str(college_2)
+```
+### Missing Data 
+```{r}
+#Now let's take a look at missing data issue
+md.pattern(college_2, rotate.names = TRUE)
+
+#Delete the rest of the NA columns 
+college_2 <- college_2[,-1]
+college_2
+college_3 <- college_2[complete.cases(college_2), ]
+
+str(college_3)
+
+md.pattern(college_3, rotate.names = TRUE)
+
+
+md.pattern(college_3)
+
+college_3$grad_100_value
+```
+
+
+
+
+
+
+
+
+
+
+
+```{r}
+(column_index <- tibble(colnames(college_3)))
+
+
+qual.names <- c("level","control")
+college_3[,qual.names] <- lapply(college_3[,qual.names], as.factor)
+
+quan.names <-c("ft_fac_percentile", "grad_100_value","grad_100_percentile","grad_150_value","grad_150_percentile","retain_value","cohort_size","ft_fac_value","pell_value", "ft_pct", "aid_value", "aid_percentile","pell_percentile" )
+college_3[,quan.names] <- lapply(college_3[,quan.names], as.numeric)
+
+
+str(college_3)
+
+```
+
+
+## Let's take a closer look at control and level
+```{r}
+table(college_3$control)
+
+college_3$control  <- fct_collapse(college_3$control,
+                           Public = "Public", 
+                           Private ="Private not-for-profit",
+                        other = c("Private for-profit"))
+                        
+
+table(college_3$control)
+table(college_3$level)
+table(college_3$grad_100_value)
+```
+
+
+## Now we can move forward in normalizing the numeric values and create a index based on numeric columns:
+```{r}
+(grad_100_value_c <- scale(college_3$grad_100_value, center = TRUE, scale = FALSE))#center but not standardized
+
+(grad_100_value_sc <- scale(college_3$grad_100_value, center = TRUE, scale = TRUE))#center and standardized 
+
+str(college_3)
+
+
+normalize <- function(x){
+ (x - min(x)) / (max(x) - min(x))
+}
+
+(college_3$grad_100_value)-min(college_3$grad_100_value)
+(max(college_3$grad_100_value)-min(college_3$grad_100_value))
+
+
+(grad_100_value_n <- normalize(college_3$grad_100_value))
+class(grad_100_value_n)
+
+
+#Let's check just to be sure 
+
+grad_100_value_density <- density(college_3$grad_100_value)
+plot(college_3$grad_100_value)
+
+grad_100_value_n <- density(grad_100_value_n)
+plot(grad_100_value_n)
+
+
+abc <- names(select_if(college_3, is.numeric))# select function to find the numeric variables and create a character string  
+abc
+
+#Use lapply to normalize the numeric values 
+
+college_3[abc] <- lapply(college_3[abc], normalize)#use apply again with the normalizer function we created. 
+
+str(college_3)
+
+```
+
+## One-hot Encoding 
+[ML Tools One-Hot Overview](https://www.rdocumentation.org/packages/mltools/versions/0.3.5/topics/one_hot)
+
+```{r}
+# Next let's one-hot encode those factor variables/character 
+
+
+class(college_3)
+
+college_1h <- one_hot(as.data.table(college_3),cols = "auto",sparsifyNAs = TRUE,naCols = FALSE,dropCols = TRUE,dropUnusedLevels = TRUE)
+
+str(college_1h)
+```
+## Baseline/Prevalance 
+```{r}
+(box <- boxplot(college_1h$exp_award_state_value, horizontal = TRUE)) 
+box$stats
+fivenum(college_3$exp_award_state_value)
+
+
+#added this a predictor versus replacing the numeric version
+(college_1h$exp_award_state_value_f <- cut(college_1h$exp_award_state_value,c(0,.43,1),labels = c(0,1)))#why the NA? If we want two segments we input three numbers, start, cut and stop values
+
+View(college_1h$exp_award_state_value_f)
+
+#So no let's check the prevalence 
+(prevalence <- table(college_1h$exp_award_state_value_f)[[2]]/length(college_1h$exp_award_state_value_f))
+
+table(college_1h$exp_award_state_value_f)
+
+```
+
+## Dropping Variables and Partitioning   
+```{r}
+# Training|Evaluation, Tune|Evaluation, Test|Evaluation
+# Divide up our data into three parts, Training, Tuning, and Test
+
+#There is not a easy way to create 3 partitions using the createDataPartitions
+
+college_dt <- college_1h[,-c("carnegie_ct","state_sector_ct")]
+
+view(college_dt)
+
+part_index_1 <- caret::createDataPartition(college_dt$exp_award_state_value_f,
+                                           times=1,#number of splits
+                                           p = 0.70,#percentage of split
+                                           groups=1,
+                                           list=FALSE)
+View(part_index_1)
+dim(college_dt)
+
+train <- college_dt[part_index_1,]#index the 70%
+tune_and_test <- college_dt[-part_index_1, ]#index everything but the %70
+
+#The we need to use the function again to create the tuning set 
+
+tune_and_test_index <- createDataPartition(tune_and_test$exp_award_state_value_f,
+                                           p = .5,
+                                           list = FALSE,
+                                           times = 1)
+
+tune <- tune_and_test[tune_and_test_index, ]
+test <- tune_and_test[-tune_and_test_index, ]
+
+dim(train)
+dim(tune)
+dim(test)
+
+table(train$exp_award_state_value_f)#check the prevalance
+439 /(1921+439 )
+table(test$exp_award_state_value_f)
+93/(411+93)
+table(tune$exp_award_state_value_f)
+
+```
+
+## What are my insticts telling me
+```{r}
+#What do your instincts tell you about the data? 
+
+#My instincts are telling me that the prevalence is maintained which is good! 
+
+#Can it address your problem, what areas/items are you worried about?
+
+#I think the spread of the data on the boxplot has me a bit concerned of skewness> Something else I was concerned about is the missing data we removed ealrier and whether that has an impact on the results
+
+```

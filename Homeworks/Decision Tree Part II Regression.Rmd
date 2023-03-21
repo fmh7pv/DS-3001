@@ -1,0 +1,293 @@
+---
+title: "Tree_Regression_Lab"
+author: "Fadumo Hussein"
+date: "3/21/2022"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+---
+title: "In Class DT"
+author: "Brian Wright"
+date: "December 7, 2017"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(tidyverse)
+library(caret)
+library(ROCR)
+library(MLmetrics)
+library(mltools)
+library(rpart.plot)
+library(mice)
+```
+#This week we are trying to predict a continous variable of your choosing from the below dataset. Follow the steps, mostly same as last week.  
+
+```{r}
+# http://archive.ics.uci.edu/ml/datasets/Adult
+
+url <- "http://archive.ics.uci.edu/ml/machine-learning-databases/adult/adult.data"
+
+names <- c("age","workclass","fnlwgt","education","education.num","marital.status","occupation","relationship","race","sex","capital.gain","capital.loss","hours.per.week","native.country", "salary")
+
+xx <- readr::read_csv(url,col_names=names)
+
+xx[xx=="?"] <- NA
+
+View(xx)
+
+summary(xx)
+
+table(xx$workclass)
+
+histogram(xx$age,type='count', nint=30)
+
+```
+
+
+```{r}
+#2 Ensure all the variables are classified correctly including the target variable and collapse factors if still needed. 
+table(xx$education)
+xx$education<- fct_collapse(xx$education, 
+                           P_12 = c("Preschool",
+                                        "10th",
+                                        "11th",
+                                        "12th",
+                                        "1st-4th",
+                                        "5th-6th",
+                                        "7th-8th",
+                                        "9th","HS-grad"),
+                           Assoc= c("Assoc-acdm",
+                                         "Assoc-voc"),
+                           College = c("Bachelors", "Masters","Doctorate"), 
+                           Other = c("Some-college", "Prof-school"))
+table(xx$workclass)
+xx$workclass <- fct_collapse(xx$workclass,
+                             Government = c("Federal-gov", "State-gov", "Local-gov"), 
+                             Selfepm = c("Self-emp-inc", "Self-emp-not-inc"),
+                             Private =c("Private" ), 
+                             'Without pay' =c ("Without-pay"),
+                             Other =c ("?", "Never-worked"))
+view(xx)
+
+table(xx$relationship)
+xx$relationship <- fct_collapse(xx$relationship, 
+                                Family =c("Husband", "Own-child", "Wife", "Other-relative"), 
+                                "No-Family" =c("Not-in-family", "Unmarried")
+)
+table(xx$native.country)
+xx$native.country<- fct_lump(xx$native.country, n=2)
+table(xx$native.country)                         
+xx$native.country <-  fct_collapse(xx$native.country, 
+                                    "United-States" =c("United-States"),
+                                    Other =c("Mexico", "Other")) 
+
+table(xx$native.country) 
+table(xx$race) 
+xx$race <- fct_lump(xx$race, n=2)
+xx$race <-  fct_collapse(xx$race, 
+                         White =c("White"),
+                         Other =c("Black", "Other")) 
+table(xx$race)
+table(xx$occupation)
+
+xx$occupation <- fct_collapse(xx$occupation, 
+                              Military =c("Armed-Forces", "Protective-serv"),
+                              "Non-Military"=c("Adm-clerical", "Craft-repair", "Exec-managerial", "Farming-fishing", "Handlers-cleaners", "Machine-op-inspct", "Other-service", "Priv-house-serv", "Prof-specialty", "Protective-serv", "Sales", "Tech-support", "Transport-moving"))
+
+
+
+xx$sex <- factor(xx$sex)
+xx$sex <-fct_lump(xx$sex, n=2)
+table(xx$sex)
+
+xx$marital.status<- fct_collapse(xx$marital.status, 
+                                 Married =c("Married-AF-spouse", "Married-civ-spouse", "Married-spouse-absent"), 
+                                 "Not Married" =c("Divorced", "Never-married", "Separated", "Widowed"))
+```
+
+```{r}
+#3 Check for missing variables and correct as needed. 
+
+xx[xx=="?"] <- NA
+
+md.pattern(xx, rotate.names = TRUE)
+
+
+xx <- xx[complete.cases(xx), ]
+
+md.pattern(xx, rotate.names = TRUE)
+
+view(xx)
+
+```
+
+```{r}
+#4 Split your data into test, tune, and train. (80/10/10)
+set.seed(1999)
+part_index_1 <- caret::createDataPartition(xx$age,
+                                           times=1,
+                                           p = 0.80,
+                                           groups=1,
+                                           list=FALSE)
+
+train <- xx[part_index_1, ]
+tune_and_test <- xx[-part_index_1, ]
+train
+
+#The we need to use the function again to create the tuning set 
+
+tune_and_test_index <- createDataPartition(tune_and_test$age,
+                                           p = .5,
+                                           list = FALSE,
+                                           times = 1)
+
+tune <- tune_and_test[tune_and_test_index, ]
+test <- tune_and_test[-tune_and_test_index, ]
+
+
+dim(train)
+dim(test) 
+dim(tune)
+
+```
+
+```{r}
+#5 Build your model using the training data, rpart2, and repeated cross validation as reviewed in class with the caret package.
+features <- xx[,-1] #dropping 1  because it's target variable. 
+View(features)
+str(features)
+target <- xx$age
+
+target
+
+str(features)
+
+str(target)
+
+#Step 1: Cross validation process-the process by which the training data will be used to build the initial model must be set. As seen below:
+fitControl <- trainControl(method = "repeatedcv",
+                          number = 10,
+                          repeats = 5)
+#Step 2: Usually involves setting a hyper-parameter search.
+
+tree.grid <- expand.grid(maxdepth=c(3:20))
+
+
+#Step 3: Train the models
+set.seed(1984)
+xx_mdl_r <- train(x=features,
+                y=target,
+                method="rpart2",
+                trControl=fitControl,
+                metric="RMSE")
+
+```
+
+```{r}
+#6 View the results, comment on how the model performed and which variables appear to be contributing the most (variable importance)  
+
+xx_mdl_r
+
+set.seed(1984)
+
+varImp(xx_mdl_r)
+xx_mdl_r$results
+
+# The variables relationship, hours.per.week, and salary are contributing the most
+
+```
+
+```{r}
+#7 Plot the output of the model to see the tree visually, using rpart.plot, is there anything you notice that might be a concern?  
+
+plot(xx_mdl_r)
+rpart.plot(xx_mdl_r$finalModel, type=3,extra=101)
+
+```
+
+```{r}
+#8 Use the tune set and the predict function with your model to make predicts for the target variable.
+xx_pred_tune_r = predict(xx_mdl_r,tune)
+
+View(as_tibble(xx_pred_tune_r))
+```
+
+```{r}
+#9 Use the postResample function to get your evaluation metrics. Also calculate NRMSE using the range (max-min) for the target variable. Explain what all these measures mean in terms of your models predictive power. 
+
+
+
+postResample(pred = xx_pred_tune_r, obs = tune$age)
+#We want this number, RSME, to be low relative to the range of the target variable and Rsquared to be close to 1. 
+range(tune$age)
+90-17
+8.840440/73
+
+#Percentage error in terms of the range of the target variable or NRMSE in this model is 12.11 years, meaning this model is off by the actual age by 12.11 years. Additionally this means that the model will be off by 12.11% 
+```
+
+```{r}
+#10 Based on your understanding of the model and data adjust the hyper-parameter via the built in train control function in caret or build and try new features, does the model quality improve or not? If so how and why, if not, why not?
+
+tree.grid <- expand.grid(maxdepth=c(6))
+
+xx_mdl_1_r <- train(x=features,
+                y=target,
+                method="rpart2",#type of model uses maxdepth to select a model
+                trControl=fitControl,#previously created
+                tuneGrid=tree.grid,#expanded grid
+                metric="RMSE")
+xx_mdl_1_r
+
+rpart.plot(xx_mdl_1_r$finalModel, type=5,extra=101)
+
+
+xx_mdl_r$results
+xx_mdl_1_r$results
+
+#The model quality did not improve,.This is an issue of over fitting where increasing the maxdepth to 6, it  does not help the model improve in quality. The best value for the max-depth is 3 seen in the first model. 
+
+
+```
+
+```{r}
+#11 Once you are confident that your model is not improving, via changes implemented on the training set and evaluated on the the tune set, predict with the test set and report final evaluation of the model. Discuss the output in comparison with the previous evaluations.  
+
+pred_test_reg <- predict(xx_mdl_1_r,test)
+
+head(pred_test_reg)
+
+postResample(pred = xx_pred_tune_r, obs = tune$age)
+
+postResample(pred = pred_test_reg,obs = test$age)
+
+#This final model improved in comparison with the previous evaluations due to parameter being adjusted 
+
+```
+
+```{r}
+#12 Summarize what you learned along the way and make recommendations on how this could be used moving forward, being careful not to over promise. 
+
+#I learned about Root Mean Square Error and Root Mean Square Error. I learned how they are used to evaluate regression based models. Something that can be improved moving forward is using examples on how to resolve overfit like pruning. 
+```
+
+```{r}
+#13 What was the most interesting or hardest part of this process and what questions do you still have? 
+
+# I am suprised about this weeks work was not as difficult as week 7's assignment, but I believe that has more to do with the data set rather than the material itseld 
+
+#I do not have any questions 
+```

@@ -1,0 +1,242 @@
+---
+title: 'Assignment 5: Data Preparation Lab, Hussein'
+author: "Fadumo Hussein"
+date: "2022-10-20"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+```
+
+```{r}
+library(caret)
+library(tidyverse)
+library(class)
+library(plotly)
+library(mice)
+library(MLmetrics)
+library(mltools)
+library(data.table)
+``` 
+
+### Data is ready so let's build the model
+```{r}
+# Let's run the kNN algorithm on our college data. 
+# Check the composition of labels in the data set. 
+
+college_1h <-college_1h[,-23]
+college_1h<- college_1h[complete.cases(college_1h), ]
+view(college_1h)
+college_1h$grad_100_value_f
+
+
+table(college_1h$grad_100_value_f)[2]
+table(college_1h$grad_100_value_f)[2]/sum(table(college_1h$grad_100_value_f))
+
+
+
+
+# This means that at random, we have an 27.04% chance of correctly picking
+# out a exp award state value. Let's see if kNN can do any better.
+
+part_index_1 <- createDataPartition(college_1h$grad_100_value_f,
+                                           times=1,
+                                           p = 0.80,
+                                           groups=1,
+                                           list=FALSE)
+View(part_index_1)
+
+train <- college_1h[part_index_1,]
+str(train)
+
+tune_and_test <- college_1h[-part_index_1, ]
+
+
+#The we need to use the function again to create the tuning set 
+
+tune_and_test_index <- createDataPartition(tune_and_test$grad_100_value_f,
+                                           p = .5,
+                                           list = FALSE,
+                                           times = 1)
+
+tune <- tune_and_test[tune_and_test_index, ]
+test <- tune_and_test[-tune_and_test_index, ]
+
+str(train)
+dim(tune)
+dim(test)
+```
+## Train the classifier 
+
+```{r}
+# Let's train the classifier for k = 3 using the class package. 
+
+# k-Nearest Neighbor is a randomized algorithm, so make sure to
+# use set.seed() to make your results repeatable.
+set.seed(1984)
+college_9NN <-  knn(train = train,#<- training set cases
+               test = tune,    #<- tune set cases
+               cl = train$grad_100_value_f,#<- category for true classification
+               k = 3,#<- number of neighbors considered
+               use.all = TRUE,
+               prob = TRUE)# provides the output in probabilities 
+
+# View the output.
+str(college_9NN)
+table(college_9NN)
+table(tune$grad_100_value_f)
+
+
+college_9NN
+
+View(as.tibble(college_9NN))
+View(as.tibble(attr(college_9NN,"prob")))
+
+```
+
+## Compare to the original data - Evaluation 
+
+[Confusion Matrix](https://en.wikipedia.org/wiki/Confusion_matrix)
+
+```{r}
+# How does the kNN classification compare to the true class?
+
+kNN_res = table(college_9NN,
+                tune$grad_100_value_f)
+kNN_res
+sum(kNN_res)  #<- the total is all the test examples
+
+#Accuracy = TP+TN/(TP+TN+FP+FN)
+
+(231+85)/(231+85+1+1)
+
+# Select the true positives and true negatives by selecting
+# only the cells where the row and column names are the same.
+kNN_res[row(kNN_res) == col(kNN_res)]#essentially the left to right diagonal 
+
+# Calculate the accuracy rate by dividing the correct classifications
+# by the total number of classifications.
+kNN_acc = sum(kNN_res[row(kNN_res) == col(kNN_res)]) / sum(kNN_res)
+
+kNN_acc
+
+ 
+
+confusionMatrix(as.factor(college_9NN), as.factor(tune$grad_100_value_f), positive = "1", dnn=c("Prediction", "Actual"), mode = "sens_spec")
+
+#sensitivity, recall and true poss rate = TP/TP+FN
+#specificity, true negative rate = TN/TN+FP
+
+#So our ability to "predict" sign up customers is at roughly 96% so that's  really solid. This means that out of 10 sign ups, classify 9ish correctly! Which is why in this case we would want to tune this model on TPR (Sensitivity), to get it has high as possible while sacrificing Specificity.  Similar to a medical diagnosis example, where we would rather produce false positives as compared to false negatives, predict more of those with cancer that don't have it as compared to missing anyone that actually has cancer.      
+
+#Reference for confusion matrix: https://www.rdocumentation.org/packages/caret/versions/6.0-86/topics/confusionMatrix 
+
+```
+
+
+
+## Evaluation Examples 
+
+### Selecting the correct "k"
+```{r}
+# How does "k" affect classification accuracy? Let's create a function
+# to calculate classification accuracy based on the number of "k."
+chooseK = function(k, train_set, val_set, train_class, val_class){
+  # Build knn with k neighbors considered.
+  set.seed(1)
+  class_knn = knn(train = train_set,    #<- training set cases
+                  test = val_set,       #<- test set cases
+                  cl = train_class,     #<- category for classification
+                  k = k,                #<- number of neighbors considered
+                  use.all = TRUE)       #<- control ties between class assignments
+                                        #   If true, all distances equal to the kth 
+                                        #   largest are included
+  conf_mat = table(class_knn, val_class)
+  
+  # Calculate the accuracy.
+  accu = sum(conf_mat[row(conf_mat) == col(conf_mat)]) / sum(conf_mat)                         
+  cbind(k = k, accuracy = accu)
+}
+
+
+
+# The sapply() function plugs in several values into our chooseK function.
+#sapply(x, fun...) "fun" here is passing a function to our k-function
+# function(x)[function] allows you to apply a series of numbers
+# to a function without running a for() loop! Returns a matrix.
+knn_different_k = sapply(seq(1, 21, by = 2),  #<- set k to be odd number from 1 to 21
+                         function(x) chooseK(x, 
+                          train_set = train,
+                          val_set = tune,
+                          train_class = train$grad_100_value_f,
+                          val_class = tune$grad_100_value_f))
+
+View(knn_different_k)
+
+#A bit more of a explanation...
+seq(1,21, by=2)#just creates a series of numbers
+sapply(seq(1, 21, by=2), function(x) x+1)#sapply returns a new vector using the series of numbers and some calculation that is repeated over the vector of numbers 
+
+# Reformatting the results to graph
+View(knn_different_k)
+class(knn_different_k)#matrix 
+
+knn_different_k = tibble(k = knn_different_k[1,],
+                             accuracy = knn_different_k[2,])
+
+View(test)
+View(knn_different_k)
+
+# Plot accuracy vs. k.
+
+ggplot(knn_different_k,
+       aes(x = k, y = accuracy)) +
+  geom_line(color = "orange", size = 1.5) +
+  geom_point(size = 3)
+
+dev.off()
+
+# 1 to 3 nearest neighbors seems to be a good choice because that's the
+# greatest improvement in predictive accuracy before the incremental 
+# improvement trails off.
+```
+
+### Adjusting the threshold
+```{r}
+str(college_9NN)
+
+college_prob_1 <- tibble(attr(college_9NN, "prob"))
+
+View(bank_prob_1)
+
+final_model <- tibble(k_prob=college_prob_1$`attr(college_9NN, "prob")`,pred=college_9NN,target=tune$grad_100_value_f)
+
+View(final_model)
+
+#Need to convert this to the likelihood to be in the poss class.
+final_model$pos_prec <- ifelse(final_model$pred == 0, 1-final_model$k_prob, final_model$k_prob)
+
+View(final_model)
+
+#Needs to be a factor to be correctly  
+final_model$target <- as.factor(final_model$target)
+
+densityplot(final_model$pos_prec)
+
+#confusionMatrix from Caret package
+confusionMatrix(final_model$pred, final_model$target, positive = "1", dnn=c("Prediction", "Actual"), mode = "sens_spec")
+
+adjust_thres <- function(x, y, z) {
+  #x=pred_probablities, y=threshold, z=tune_outcome
+  thres <- as.factor(ifelse(x > y, 1,0))
+  confusionMatrix(thres, z, positive = "1", dnn=c("Prediction", "Actual"), mode = "everything")
+}
+
+str(final_model)
+
+adjust_thres(final_model$pos_prec,.50,as.factor(final_model$target))
+
+```

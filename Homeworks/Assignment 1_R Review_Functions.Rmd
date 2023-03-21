@@ -1,0 +1,118 @@
+---
+title: "Assignment 1_R Review_Functions, Hussein"
+author: "Fadumo Hussein"
+date: "2022-10-14"
+output: html_document
+---
+## Are there differences in the number of succesful attempts of a homekick based on ydline and quarter?
+
+## Pseudocode 
+  - Group by Quarter
+  - Calculate Yardline Average
+  - Count total Homekicks
+  - Calculate % Succesful homekick 
+  - Arrange in descending order by ydline
+Loading and preparing the data 
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+sports <- read.csv("nfl2008_fga.csv")
+
+names <- c("homekick","qtr")
+
+sports[,names] <- lapply(sports[,names],factor)
+
+str(sports)
+```
+
+Single line version 
+```{r}
+View(sports)
+x1 <- group_by(sports,qtr)
+
+View(x1)
+x2 <- summarize(x1,homekick=sum(homekick == 1),count=n(), mean(ydline))
+
+View(x2)
+x2$ave_homekick <- x2$homekick/x2$count
+
+x2
+
+x3 <- arrange(x2,desc(`mean(ydline)`))
+print(x3)
+```
+
+## Piping it all together. 
+```{r}
+library(dplyr)
+#creating a dplyr version
+(admit_1 <- group_by(sports, qtr)%>%
+ summarize(homekick=sum(homekick == 1),count=n(),mean(ydline))%>%
+ mutate(ave_homekick=homekick/count)%>%
+ arrange((`qtr`)))
+```
+## Function  
+```{r}
+ave_homekick <- function(x){
+  xx <- group_by(x, qtr)%>% 
+ summarize(homekick=sum(homekick == 1),count=n(),mean(ydline))%>%
+  mutate(ave_homekick=homekick/count)%>%  
+  arrange(desc(`mean(ydline)`))
+  print(xx)
+}
+
+```
+
+```{r}
+ave_homekick(sports)
+
+#What do about these results are interesting? 
+
+#The quarter with the most succesful homekicks is quarter 5.
+#The smallest mean ydline is the least successful with homekicks which is suprising to me! I assumed that the closer you are to the goal post the better chance of successful attempt. 
+
+```
+
+
+## Are the similarities between the number of wines that get an 8 by alcohol and citric acid 
+
+## Pseudocode 
+  - Select alcohol and citric acid 
+  - Arrange by descending 
+  - Group by Quality 
+  - Arrange in descending order by Citric Acid 
+  
+Loading and preparing the data 
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+wine <- read.csv("winequality-red.csv")
+wine$quality <- as.factor(wine$quality)
+str(wine)
+```
+Single line version 
+```{r}
+View(wine)
+x1 <- select(wine, alcohol, citric.acid, quality) 
+View(x1)
+x2 <- arrange(x1, desc(quality))
+view(x2)
+x3 <- group_by(x2, quality)
+view(x3)
+x4 <- summarize(x3,citric.acid=sum(citric.acid),count=n(),mean(alcohol))
+view(x4)
+
+```
+
+```{r}
+ave_citric.acid <- function(x){
+  xx <- select(wine, alcohol, citric.acid, quality) %>% 
+  filter(quality ==8)%>% 
+  arrange(desc(citric.acid))%>% 
+  print(xx)
+}
+```
+
+```{r}
+ave_citric.acid(wine)
+
+#The alcohol content is really high in the wine scored an 8. Also the citric acid is really high, which makes sense as citric acid as a "fresh" taste to the wine. 
+```
