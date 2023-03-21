@@ -1,0 +1,109 @@
+---
+title: 'What is Data Science: Lifecycle, Applications, Prerequisites and Tools'
+author: "Fadumo Hussein"
+date: "9/4/2022"
+output:
+  html_document:
+    toc: TRUE
+    theme: journal
+    toc_float: TRUE
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE,cache=TRUE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r, include=FALSE}
+library(tidyverse)
+library(knitr)
+library(plotly)
+library(DT)
+library(rmarkdown)
+```
+
+<img src="https://lucidinsights.com.au/wp-content/uploads/2020/05/Data-science-applications-1024x551.png" alt="Data Science image" width="400" height="400">
+  
+Date that [article](https://www.simplilearn.com/tutorials/data-science-tutorial/what-is-data-science) was published: **September 4, 2022**
+  
+### Summary of Article
+The Simplilearn article discusses what data science is, its applications, and answers quetions regarding potential careers in data science 
+```{r tools, eval=TRUE,echo=TRUE}
+tools_to_improve <- c("What Is Data Science?", "The Data Science Lifecycle", "Prerequisites for Data Science", "Who Oversees the Data Science Process?", "What Does a Data Scientist Do? ", "Why Become a Data Scientist?", "Where Do You Fit in Data Science?", "Data Science Tools", "Difference Between Business Intelligence and Data Science", "Applications of Data Science", "Example of Data Science", "FAQs", "Wrapping It All Up")
+kable(tools_to_improve, col.names = "Key Words")
+#Use kable documentation and get rid of the x
+```
+
+### Basic Article Stats
+```{r, message=FALSE, echo=FALSE}
+#change to echo TRUE...what happens?
+stat <- data.frame("Article Views" = 2962680)
+paged_table(stat)
+```
+### Author Information
+
+![](sdc.png)
+
+Simplilearn is one of the world’s leading providers of online training for Digital Marketing, Cloud Computing, Project Management, Data Science, IT, Software Development, and many other emerging technologies.
+```{r, message= FALSE, echo=FALSE}
+article <- c('https://www.simplilearn.com/authors/simplilearn')
+article
+```
+[Knowledge Hut](https://www.knowledgehut.com/blog/data-science/top-data-science-applications-for-future)
+
+
+### What Do I Think?
+I think this article gives really good and practical examples as how companies and people can utilize data science in their careers. Its cool seeing this once man to machine effort in so many industries. I never knew data science could apply to a vast majority of fields. As someone studying this I do have a better understanding of why and in what ways these different industries now need data scientist. 
+
+### Related Links{.tabset}
+
+```{r Randomchunk, echo=FALSE}
+string <- c("https://www.nytimes.com/2012/02/12/sunday-review/big-datas-impact-in-the-world.html")
+string
+string2 <- c("https://hbr.org/2012/10/big-data-the-management-revolution")
+string2
+string3 <-c("https://www.simplilearn.com/what-is-big-data-analytics-article")
+string3
+
+```
+#### Simplilearn's Other Articles
+
+1. [Feasibility Study and Its Importance in Project Management](https://www.simplilearn.com/feasibility-study-article)
+2. [What is Blockchain Technology? How Does Blockchain Work?](https://www.simplilearn.com/tutorials/blockchain-tutorial/blockchain-technology)
+3. [IT Security Roles and Responsibilities of Cyber Security Professionals](https://www.simplilearn.com/it-security-professionals-key-roles-responsibilities-article)
+
+#### Social Media 
+* Find the Simplilearn's [Twitter](https://twitter.com/simplilearn)
+* Find the Simplilearn's [Facebook](https://www.facebook.com/Simplilearn/)
+* Find the Simplilearn's [YouTube](https://www.youtube.com/user/Simplilearn)
+* Find the Simplilearn's [LinkedIn](https://www.linkedin.com/authwall?trk=bf&trkInfo=AQHCxORe4NyIvQAAAYMj7oIoV99ownlt_TUD-8EA35aDmJt5aRDAHCXnZshAAzDN0pHm8-EIE12jhFr0neKM5A5mhwkGRSioobpglZHrHx5kinza_WC8G_0pFg6cCmOrRE9nN7Q=&original_referer=&sessionRedirect=https%3A%2F%2Fwww.linkedin.com%2Fcompany%2Fsimplilearn)
+* Find the Simplilearn's [Instagram](https://www.instagram.com/simplilearn_elearning/)
+
+```{r, out.width='50%', fig.align='center', fig.cap="Social Media Apps"}
+knitr::include_graphics('https://www.facebook.com/Simplilearn/photos/a.146195438754345/1133983329975546/')
+```
+
+### Random Plots{.tabset}
+
+#### Seatbelts  plot 
+```{r,out.width='70%'}
+plot(Seatbelts )
+#using the reference below, change the size of the plot. 
+```
+[R_Cookbook_Fig_Size](https://bookdown.org/yihui/rmarkdown-cookbook/figure-size.html)
+
+#### Puromycin Plot 
+
+```{r, echo=FALSE,out.width="50%",}
+Puromycin_plot <- ggplot(Puromycin, aes(x = conc , y = rate))+
+  geom_point(aes(color = state, shape = state))+
+  scale_color_manual(values = c("#00AFBB", "#E7B800"))
+ggplotly()
+```
+
+#### Puromycin Datatable with DT
+
+```{r, echo=FALSE}
+DT::datatable(Puromycin)
+```
