@@ -1,0 +1,396 @@
+---
+title: "Clustering Lab"
+author: "Fadumo Hussein"
+date: "9/20/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Goal: Know how to make decisions and answer questions using clustering. 
+
+Repeat the clustering process only using the Rep house votes dataset
+- What differences and similarities did you see between how the clustering 
+worked for the datasets?
+
+```{r}
+library(e1071)
+library(tidyverse)
+library(plotly)
+library(htmltools)
+library(devtools)
+library(caret)
+library(mice)
+library(NbClust)
+```
+
+
+```{r}
+#Select the variables to be included in the cluster 
+nba_salaries <- read_csv("nba_salaries_22.csv")
+
+# What does the data look like?
+View(nba_salaries)
+str(nba_salaries)
+table(nba_salaries$Salary)
+
+NBA_Perf_22 <- read_csv("NBA_Perf_22.csv")
+View(NBA_Perf_22)
+NBA <- inner_join(nba_salaries, NBA_Perf_22)
+View(NBA)
+
+md.pattern(NBA, rotate.names = TRUE)
+
+NBA <- NBA[complete.cases(NBA), ]
+
+md.pattern(NBA, rotate.names = TRUE)
+
+View(NBA)
+
+NBA$Salary <- gsub("[^[:alnum:]]", "", NBA$Salary )
+
+NBA[,c(2, 4, 6:30)] <- lapply(NBA[,c(2, 4, 6:30)], as.numeric)
+str(NBA)
+
+abc <- names(select_if(NBA, is.numeric))
+
+abc
+NBA[abc] <- lapply(NBA[abc], normalize)
+
+str(NBA)
+
+
+#Great so now I gotta find the avg salary of the duplicates so my first step is to
+#find the number of current duplicates 
+
+sum(duplicated(NBA))
+
+
+#Okay so I gotta build a function that find the duplicates and finds the average
+#of each similar to the first lab 
+
+NBA_sum1 <- aggregate(Salary ~ Player, NBA, sum) #adding up everything 
+view(NBA_sum1)
+
+NBA_sum2 <- NBA %>%                                    
+  group_by(Player) %>%
+  summarise(Salary = mean(Salary)) %>% 
+  as.data.frame()
+
+view(NBA_sum2)
+
+#Lets check 
+
+sum(duplicated(NBA_sum2)) #purr 
+
+#Again for feature variable 
+
+
+NBA_PTS1 <- aggregate(PTS ~ Player, NBA, sum) #adding up everything 
+view(NBA_eFG1)
+
+NBA_PTS2 <- NBA %>%                                    
+  group_by(Player) %>%
+  summarise( PTS= mean(PTS)) %>% 
+  as.data.frame()
+
+view(NBA_PTS2)
+
+#Lets check 
+
+sum(duplicated(NBA_PTS2)) #purr x 2
+
+
+NBA2 <- inner_join(NBA_sum2, NBA_PTS2, by = "Player")
+view(NBA2)
+
+
+#I chose PTS, points per game as my variable to relate to salary. Point per game indicates how well a player adds to the team.
+
+
+```
+
+```{r}
+#Run the clustering algo with 2 centers
+
+clust_data_NBA = NBA2[, c("PTS", "Salary")]
+View(clust_data_NBA)
+
+set.seed(1)
+kmeans_obj_NBA = kmeans(clust_data_NBA, centers = 2, 
+                        algorithm = "Lloyd")   
+kmeans_obj_NBA
+
+kmeans_obj_NBA$betweenss/kmeans_obj_NBA$totss
+
+# View the results of each output of the kmeans function.
+head(kmeans_obj_NBA)
+```
+
+```{r}
+#View the results
+
+kmeans_obj_NBA
+clusters_NBA = as.factor(kmeans_obj_NBA$cluster)
+
+# What does the kmeans_obj look like?
+View(clusters_NBA)
+```
+
+```{r}
+#Visualize the output
+
+View(NBA)
+View(clusters_NBA)
+
+ggplot(NBA2, aes(x = `PTS`, 
+                            y = `Salary`,
+                            shape = clusters_NBA)) + 
+  geom_point(size = 6) +
+  ggtitle("Points Per Game vs. Salary of NBA Players in 2020-2021") +
+  xlab("Points Per Game") +
+  ylab("Salary") +
+  scale_shape_manual(name = "Cluster", 
+                     labels = c("Cluster 1", "Cluster 2"),
+                     values = c("1", "2")) +
+  theme_light()
+
+```
+
+```{r}
+#Evaluate the quality of the clustering 
+num_NBA = kmeans_obj_NBA$betweenss
+
+# Total variance, "totss" is the sum of the distances
+# between all the points in the data set.
+denom_NBA = kmeans_obj_NBA$totss
+
+# Variance accounted for by clusters.
+(var_exp_NBA = num_NBA / denom_NBA)
+```
+
+```{r}
+#Use the function we created to evaluate several different number of clusters
+explained_variance = function(data_in, k){
+  
+  # Running the kmeans algorithm.
+  set.seed(1)
+  kmeans_obj = kmeans(data_in, centers = k, algorithm = "Lloyd", iter.max = 30)
+  
+  # Variance accounted for by clusters:
+  # var_exp = intercluster variance / total variance
+  var_exp = kmeans_obj$betweenss / kmeans_obj$totss
+  var_exp  
+}
+
+
+
+View(clust_data_NBA)
+
+# The sapply() function plugs in several values into our explained_variance function.
+#sapply() takes a vector, lapply() takes a dataframe
+explained_var_NBA = sapply(1:10, explained_variance, data_in = clust_data_NBA)
+
+View(explained_var_NBA)
+
+
+# Data for ggplot2.
+elbow_data_NBA = data.frame(k = 1:10, explained_var_NBA)
+View(elbow_data_NBA)
+```
+
+```{r}
+#Create a elbow chart of the output 
+# Plotting data.
+ggplot(elbow_data_NBA, 
+       aes(x = k,  
+           y = explained_var_NBA)) + 
+  geom_point(size = 4) +           #<- sets the size of the data points
+  geom_line(size = 1) +            #<- sets the thickness of the line
+  xlab('k') + 
+  ylab('Inter-cluster Variance / Total Variance') + 
+  theme_light()
+```
+
+```{r}
+#Use NbClust to select a number of clusters
+# Install packages.
+install.packages("NbClust") #if needed
+library(NbClust)
+
+# Run NbClust.
+(nbclust_obj_NBA = NbClust(data = clust_data_NBA, method = "kmeans"))
+
+# View the output of NbClust.
+nbclust_obj_NBA
+
+# View the output that shows the number of clusters each method recommends.
+View(nbclust_obj_NBA$Best.nc)
+
+freq_k_NBA = nbclust_obj_NBA$Best.nc[1,]
+freq_k_NBA = data.frame(freq_k_NBA)
+View(freq_k_NBA)
+
+nbclust_obj_NBA$Best.nc
+
+# Check the maximum number of clusters suggested.
+max(freq_k_NBA)
+
+#essentially resets the plot viewer back to default
+dev.off()
+
+```
+
+```{r}
+#Display the results visually 
+ggplot(freq_k_NBA,
+       aes(x = freq_k_NBA)) +
+  geom_bar() +
+  scale_x_continuous(breaks = seq(0, 15, by = 1)) +
+  scale_y_continuous(breaks = seq(0, 12, by = 1)) +
+  labs(x = "Number of Clusters",
+       y = "Salary",
+       title = "Cluster Analysis")
+
+```
+
+```{r}
+#Using the recommended number of cluster compare the output to the elbow chart method, assuming it's different. 
+set.seed(1)
+kmeans_obj_NBA = kmeans(clust_data_NBA, centers = 3, algorithm = "Lloyd")
+
+# this is the output of the model. 
+kmeans_obj_NBA$cluster
+
+NBA2$clusters <- kmeans_obj_NBA$cluster
+View(NBA2)
+
+# Do some data preparation
+# drop the name variable, won't be helpful
+tree_data <- NBA2[,-1]
+str(tree_data)
+# change 1 and 5 to factors
+tree_data$clusters <-as.factor(tree_data$clusters)
+# do we need to normalize? 
+
+str(tree_data)
+
+
+# Split 
+train_index <- createDataPartition(tree_data$clusters,
+                                   p = .7,
+                                   list = FALSE,
+                                   times = 1)
+train <- tree_data[train_index,]
+tune_and_test <- tree_data[-train_index, ]
+
+#The we need to use the function again to create the tuning set 
+
+tune_and_test_index <- createDataPartition(tune_and_test$clusters,
+                                           p = .5,
+                                           list = FALSE,
+                                           times = 1)
+
+tune <- tune_and_test[tune_and_test_index, ]
+test <- tune_and_test[-tune_and_test_index, ]
+
+dim(tune)
+dim(test)
+
+# Create our features and target for training of the model. 
+
+features <- as.data.frame(train[,-1])
+target <- train$clusters
+
+
+set.seed(1980)
+NBA_dt <- train(x=features,
+                  y=target,
+                  method="rpart")
+
+# This is more or less a easy target but the clusters are very predictive. 
+NBA_dt
+varImp(NBA_dt)
+
+```
+
+```{r}
+# What differences and similarities did you see between how the clustering 
+# worked for the datasets?  
+# Let's predict and see how we did. 
+NBA_predict_1 = predict(NBA_dt,tune,type= "raw")
+
+confusionMatrix(as.factor(NBA_predict_1), 
+                as.factor(tune$clusters), 
+                dnn=c("Prediction", "Actual"), 
+                mode = "sens_spec")
+
+# I don't think there is much of a difference between this model and the original mode
+#The data is still condensed so I am not really sure what difference this model made
+
+
+```
+
+
+```{r}
+#Bonus: Create a 3d version of the output
+
+NBA_Age <- aggregate(Age ~ Player, NBA, sum) #adding up everything 
+view(NBA_Age)
+
+NBA_Age2 <- NBA %>%                                    
+  group_by(Player) %>%
+  summarise( Age= mean(Age)) %>% 
+  as.data.frame()
+
+view(NBA_Age2)
+
+NBA3 <- inner_join(NBA2, NBA_Age2, by = "Player")
+view(NBA3)
+
+NBA3$Player <- gsub("[^[:alnum:]]", "", NBA3$Player)
+
+view(NBA3)
+
+NBA3_color3D <- data.frame(clusters = c(1, 2, 3),
+                           color = c("gray51", "coral","forestgreen"))
+
+NBA4 <- inner_join(NBA3, NBA3_color3D, by = "clusters")
+
+view(NBA4)
+
+
+
+fig <- plot_ly(NBA4, 
+               type = "scatter3d",
+               mode="markers",
+               symbol = ~clusters,
+               x = ~PTS, 
+               y = ~Salary, 
+               z = ~Age ,
+               color = ~color,
+               colors = c('#FC766AFF','#B0B8B4FF', "#184A45FF"), 
+               text = ~paste('Player',Player,
+                             "Salary:",Salary))
+
+
+fig
+dev.off()
+
+
+
+#A potential No player is Lebron James. Although he has high PTS, he has high Age meaning low shelf life and is paid quite highly already
+#A potential Yes player is a Morant, his age (longer shelf life in the NBA ) and salary are really low while his PTS is super high. 
+#A potential Maybe player is Davion Mitchell, his age and salary are low, is PTS is 0.4 which isnt amazing but could improve with additional time in the league 
+
+```
+
+
+  
+
+
+
+
+
